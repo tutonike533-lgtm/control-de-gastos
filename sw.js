@@ -1,6 +1,6 @@
 // Service worker de Control de Gastos: cachea la app para que funcione offline
 // y sea instalable como PWA en Android y Windows.
-const CACHE_NAME = 'misgastos-v2';
+const CACHE_NAME = 'misgastos-v3';
 const ASSETS = [
   './',
   './index.html',
