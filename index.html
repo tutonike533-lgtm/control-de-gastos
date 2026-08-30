@@ -115,6 +115,15 @@ main{padding:16px;}
 .voice-actions button{flex:1;}
 .btn-cancel{background:#FEE2E2;color:var(--danger);border:none;border-radius:12px;padding:12px;font-weight:700;cursor:pointer;}
 .unsupported{background:#FEF3C7;color:#92400E;border-radius:10px;padding:12px;font-size:13px;margin-top:14px;}
+.dictate-box{margin-top:18px;padding-top:16px;border-top:1px solid var(--border);}
+.dictate-box label{display:block;font-size:13px;font-weight:700;color:var(--text);margin-bottom:4px;}
+.dictate-help{font-size:12px;color:var(--muted);margin:0 0 10px;line-height:1.45;}
+.dictate-help em{font-style:normal;font-weight:600;color:var(--text);}
+.dictate-box input{
+  width:100%;padding:11px 12px;border:1.5px solid var(--border);border-radius:10px;
+  font-size:15px;background:var(--card);color:var(--text);margin-bottom:8px;
+}
+.dictate-box .btn-secondary{margin-top:0;}
 
 /* History */
 .hist-item{display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid var(--border);}
@@ -248,8 +257,16 @@ nav.tabbar button.active{color:var(--indigo);}
           <div class="mic-status" id="micStatus">Toca el micrófono y di algo como "Gasté 3500 en colectivo"</div>
         </div>
         <div id="voiceUnsupported" class="unsupported" style="display:none;">
-          El reconocimiento de voz no está disponible en este navegador. Probá con Chrome o Edge en Android o PC.
+          El reconocimiento de voz no está disponible en este navegador. Usá el dictado del teclado, acá abajo 👇
         </div>
+
+        <div class="dictate-box">
+          <label for="dictateInput">O dictá con el micrófono de tu teclado</label>
+          <p class="dictate-help">Tocá el campo, después el 🎤 de tu teclado, y decí algo como <em>“gasté 3500 en colectivo”</em>. Funciona aunque el micrófono de arriba no ande.</p>
+          <input type="text" id="dictateInput" placeholder="Gasté 3500 en colectivo" autocomplete="off" enterkeyhint="done">
+          <button class="btn-secondary" id="dictateBtn">Interpretar frase</button>
+        </div>
+
         <div class="transcript" id="voiceTranscript" style="display:none;"></div>
         <div class="voice-preview" id="voicePreview" style="display:none;">
           <div class="field">
