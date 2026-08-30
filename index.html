@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Control de Gastos</title>
+<meta name="theme-color" content="#4F46E5">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<style>
+:root{
+  color-scheme: light;
+  --indigo:#4F46E5; --green:#16A34A; --orange:#EA580C; --red:#DC2626;
+  --purple:#9333EA; --teal:#0D9488; --gray:#6B7280;
+  --bg:#F3F4F6; --card:#FFFFFF; --text:#111827; --muted:#6B7280; --border:#E5E7EB;
+  --track:#EEF0F3; --soft:#F9FAFB; --chip-sel:#EEF2FF;
+  --danger:#DC2626; --safe:#16A34A;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    color-scheme: dark;
+    --bg:#0F1420; --card:#1B2333; --text:#EDEFF5; --muted:#9AA4BD; --border:#2E3752;
+    --track:#2A3348; --soft:#232C42; --chip-sel:#26305294;
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme: dark;
+  --bg:#0F1420; --card:#1B2333; --text:#EDEFF5; --muted:#9AA4BD; --border:#2E3752;
+  --track:#2A3348; --soft:#232C42; --chip-sel:#26305294;
+}
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  background:var(--bg); color:var(--text);
+  padding-bottom:76px;
+  -webkit-tap-highlight-color:transparent;
+}
+.app{max-width:520px;margin:0 auto;min-height:100vh;background:var(--bg);}
+header.top{
+  background:linear-gradient(135deg,var(--indigo),#6366F1);
+  color:#fff; padding:16px 16px 20px; position:sticky; top:0; z-index:10;
+  border-radius:0 0 20px 20px;
+}
+.top-row{display:flex;align-items:center;justify-content:space-between;gap:8px;}
+.top-row h1{font-size:20px;margin:0;font-weight:700;}
+.icon-btn{
+  background:rgba(255,255,255,0.18); border:none; color:#fff; border-radius:10px;
+  padding:8px 10px; font-size:13px; font-weight:600; cursor:pointer; display:flex; align-items:center; gap:4px;
+}
+.icon-btn:active{background:rgba(255,255,255,0.32);}
+.period-switch{display:flex;background:rgba(255,255,255,0.18);border-radius:10px;padding:3px;margin-top:14px;}
+.period-switch button{
+  flex:1;border:none;background:transparent;color:#fff;padding:7px 0;border-radius:8px;
+  font-size:13px;font-weight:600;cursor:pointer;opacity:0.75;
+}
+.period-switch button.active{background:#fff;color:var(--indigo);opacity:1;}
+.period-nav{display:flex;align-items:center;justify-content:space-between;margin-top:12px;}
+.period-nav button{background:rgba(255,255,255,0.18);border:none;color:#fff;width:32px;height:32px;border-radius:8px;font-size:16px;cursor:pointer;}
+.period-nav .period-label{font-size:14px;font-weight:600;text-transform:capitalize;}
+
+.summary-card{
+  background:var(--card);margin:-14px 16px 0;border-radius:16px;padding:16px;
+  box-shadow:0 4px 16px rgba(0,0,0,0.08);position:relative;z-index:5;
+}
+.summary-top{display:flex;justify-content:space-between;align-items:flex-end;}
+.summary-total .label{font-size:12px;color:var(--muted);}
+.summary-total .value{font-size:26px;font-weight:800;}
+.summary-pct{text-align:right;}
+.summary-pct .value{font-size:18px;font-weight:700;}
+.summary-pct .label{font-size:11px;color:var(--muted);}
+.progress-track{background:var(--track);border-radius:8px;height:10px;margin-top:12px;overflow:hidden;}
+.progress-fill{height:100%;border-radius:8px;background:var(--safe);transition:width .3s;}
+.progress-fill.over{background:var(--danger);}
+
+main{padding:16px;}
+.card{background:var(--card);border-radius:16px;padding:16px;margin-bottom:14px;box-shadow:0 2px 8px rgba(0,0,0,0.05);}
+.card h2{font-size:15px;margin:0 0 12px;font-weight:700;}
+.field{margin-bottom:12px;}
+.field label{display:block;font-size:12px;color:var(--muted);margin-bottom:5px;font-weight:600;}
+.field input[type=text],.field input[type=number],.field input[type=date],.field select{
+  width:100%;padding:11px 12px;border:1.5px solid var(--border);border-radius:10px;font-size:15px;background:var(--card);color:var(--text);
+}
+.field input:focus,.field select:focus{outline:none;border-color:var(--indigo);}
+.cat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;}
+.cat-chip{
+  border:2px solid var(--border);background:var(--card);border-radius:12px;padding:8px 4px;text-align:center;cursor:pointer;font-size:11px;font-weight:600;color:var(--muted);
+}
+.cat-chip .dot{width:18px;height:18px;border-radius:50%;margin:0 auto 4px;}
+.cat-chip.selected{border-color:var(--indigo);background:var(--chip-sel);color:var(--indigo);}
+.btn-primary{
+  width:100%;background:var(--indigo);color:#fff;border:none;border-radius:12px;padding:13px;font-size:15px;font-weight:700;cursor:pointer;margin-top:4px;
+}
+.btn-primary:active{background:#3730A3;}
+.btn-secondary{
+  width:100%;background:var(--chip-sel);color:var(--indigo);border:none;border-radius:12px;padding:12px;font-size:14px;font-weight:700;cursor:pointer;
+}
+.btn-outline{background:var(--card);border:1.5px solid var(--border);color:var(--text);border-radius:10px;padding:10px;font-size:13px;font-weight:600;cursor:pointer;}
+
+/* Voice tab */
+.mic-wrap{display:flex;flex-direction:column;align-items:center;padding:28px 10px 8px;}
+.mic-btn{
+  width:96px;height:96px;border-radius:50%;background:var(--indigo);border:none;color:#fff;font-size:38px;
+  cursor:pointer;box-shadow:0 6px 20px rgba(79,70,229,0.35);display:flex;align-items:center;justify-content:center;
+}
+.mic-btn.listening{background:var(--danger);animation:pulse 1.4s infinite;}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(220,38,38,0.45);}70%{box-shadow:0 0 0 22px rgba(220,38,38,0);}100%{box-shadow:0 0 0 0 rgba(220,38,38,0);}}
+.mic-status{margin-top:14px;font-size:13px;color:var(--muted);text-align:center;min-height:18px;}
+.transcript{background:var(--soft);border-radius:10px;padding:12px;font-size:14px;margin-top:14px;min-height:20px;color:var(--text);}
+.voice-preview{margin-top:14px;}
+.voice-preview .row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);font-size:14px;}
+.voice-preview .row:last-child{border-bottom:none;}
+.voice-actions{display:flex;gap:10px;margin-top:12px;}
+.voice-actions button{flex:1;}
+.btn-cancel{background:#FEE2E2;color:var(--danger);border:none;border-radius:12px;padding:12px;font-weight:700;cursor:pointer;}
+.unsupported{background:#FEF3C7;color:#92400E;border-radius:10px;padding:12px;font-size:13px;margin-top:14px;}
+
+/* History */
+.hist-item{display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid var(--border);}
+.hist-item:last-child{border-bottom:none;}
+.hist-dot{width:38px;height:38px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:17px;flex-shrink:0;}
+.hist-info{flex:1;min-width:0;}
+.hist-info .desc{font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.hist-info .meta{font-size:12px;color:var(--muted);}
+.hist-amount{font-weight:700;font-size:14px;white-space:nowrap;}
+.hist-del{background:none;border:none;color:#D1D5DB;font-size:18px;cursor:pointer;padding:4px 2px;}
+.hist-del:active{color:var(--danger);}
+.empty{text-align:center;color:var(--muted);font-size:13px;padding:24px 8px;}
+.filter-row{display:flex;gap:8px;overflow-x:auto;margin-bottom:10px;padding-bottom:2px;}
+.filter-chip{flex-shrink:0;border:1.5px solid var(--border);background:var(--card);border-radius:20px;padding:6px 12px;font-size:12px;font-weight:600;color:var(--muted);cursor:pointer;white-space:nowrap;}
+.filter-chip.active{background:var(--indigo);border-color:var(--indigo);color:#fff;}
+
+/* Chart */
+.donut-wrap{display:flex;justify-content:center;padding:8px 0 4px;}
+.legend-item{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);}
+.legend-item:last-child{border-bottom:none;}
+.legend-dot{width:12px;height:12px;border-radius:50%;flex-shrink:0;}
+.legend-name{flex:1;font-size:13px;font-weight:600;}
+.legend-amt{font-size:13px;color:var(--muted);}
+.legend-pct{font-size:13px;font-weight:700;width:44px;text-align:right;}
+.bars{display:flex;align-items:flex-end;gap:10px;height:140px;padding:10px 6px 0;}
+.bar-col{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;}
+.bar-fill{width:100%;max-width:34px;background:var(--indigo);border-radius:6px 6px 0 0;min-height:3px;}
+.bar-label{font-size:10px;color:var(--muted);margin-top:6px;text-align:center;}
+.bar-val{font-size:10px;font-weight:700;margin-bottom:3px;}
+
+/* Budget */
+.budget-row{padding:10px 0;border-bottom:1px solid var(--border);}
+.budget-row:last-child{border-bottom:none;}
+.budget-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;}
+.budget-name{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;}
+.budget-input{width:96px;padding:6px 8px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;text-align:right;}
+.budget-sub{font-size:11px;color:var(--muted);margin-top:4px;}
+.seg-toggle{display:flex;background:#F3F4F6;border-radius:10px;padding:3px;margin-bottom:14px;}
+.seg-toggle button{flex:1;border:none;background:transparent;padding:8px;border-radius:8px;font-size:13px;font-weight:600;color:var(--muted);cursor:pointer;}
+.seg-toggle button.active{background:var(--indigo);color:#fff;}
+
+/* Tab bar */
+nav.tabbar{
+  position:fixed;bottom:0;left:0;right:0;background:var(--card);border-top:1px solid var(--border);
+  display:flex;max-width:520px;margin:0 auto;padding-bottom:env(safe-area-inset-bottom,0);z-index:20;
+}
+nav.tabbar button{
+  flex:1;background:none;border:none;padding:9px 2px 8px;display:flex;flex-direction:column;align-items:center;gap:2px;
+  color:var(--muted);font-size:10px;font-weight:600;cursor:pointer;
+}
+nav.tabbar button .ic{font-size:19px;}
+nav.tabbar button.active{color:var(--indigo);}
+.tabpage{display:none;}
+.tabpage.active{display:block;}
+.toast{
+  position:fixed;bottom:88px;left:50%;transform:translateX(-50%);background:#111827;color:#fff;
+  padding:10px 18px;border-radius:10px;font-size:13px;z-index:50;opacity:0;pointer-events:none;transition:opacity .25s, transform .25s;
+}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(-6px);}
+.file-input-hidden{display:none;}
+</style>
+</head>
+<body>
+<div class="app">
+<script type="application/json" id="app-data"></script>
+
+  <header class="top">
+    <div class="top-row">
+      <h1>💰 Control de Gastos</h1>
+      <div style="display:flex;gap:6px;">
+        <button class="icon-btn" id="btnCsv" title="Exportar CSV">⬇ CSV</button>
+      </div>
+    </div>
+    <div class="period-switch">
+      <button id="modeMonthBtn" class="active">Mensual</button>
+      <button id="modeWeekBtn">Semanal</button>
+    </div>
+    <div class="period-nav">
+      <button id="prevPeriod">‹</button>
+      <div class="period-label" id="periodLabel">—</div>
+      <button id="nextPeriod">›</button>
+    </div>
+  </header>
+
+  <div class="summary-card">
+    <div class="summary-top">
+      <div class="summary-total">
+        <div class="label">Gastado</div>
+        <div class="value" id="sumTotal">$0</div>
+      </div>
+      <div class="summary-pct">
+        <div class="value" id="sumPct">—</div>
+        <div class="label">del presupuesto</div>
+      </div>
+    </div>
+    <div class="progress-track"><div class="progress-fill" id="sumBar" style="width:0%"></div></div>
+  </div>
+
+  <main>
+
+    <!-- REGISTRAR -->
+    <section class="tabpage active" id="page-add">
+      <div class="card">
+        <h2>Nuevo gasto</h2>
+        <div class="field">
+          <label>Monto</label>
+          <input type="number" id="addAmount" placeholder="0" inputmode="decimal">
+        </div>
+        <div class="field">
+          <label>Categoría</label>
+          <div class="cat-grid" id="addCatGrid"></div>
+        </div>
+        <div class="field">
+          <label>Descripción (opcional)</label>
+          <input type="text" id="addDesc" placeholder="Ej: Almuerzo">
+        </div>
+        <div class="field">
+          <label>Fecha</label>
+          <input type="date" id="addDate">
+        </div>
+        <button class="btn-primary" id="btnAddExpense">Agregar gasto</button>
+      </div>
+    </section>
+
+    <!-- VOZ -->
+    <section class="tabpage" id="page-voice">
+      <div class="card">
+        <h2>Registro por voz</h2>
+        <div class="mic-wrap">
+          <button class="mic-btn" id="micBtn">🎙️</button>
+          <div class="mic-status" id="micStatus">Toca el micrófono y di algo como "Gasté 3500 en colectivo"</div>
+        </div>
+        <div id="voiceUnsupported" class="unsupported" style="display:none;">
+          El reconocimiento de voz no está disponible en este navegador. Probá con Chrome o Edge en Android o PC.
+        </div>
+        <div class="transcript" id="voiceTranscript" style="display:none;"></div>
+        <div class="voice-preview" id="voicePreview" style="display:none;">
+          <div class="field">
+            <label>Monto</label>
+            <input type="number" id="vpAmount" inputmode="decimal" placeholder="0">
+          </div>
+          <div class="field">
+            <label>Categoría</label>
+            <div class="cat-grid" id="vpCatGrid"></div>
+          </div>
+          <div class="field">
+            <label>Descripción</label>
+            <input type="text" id="vpDesc" placeholder="Descripción">
+          </div>
+          <div class="field">
+            <label>Fecha</label>
+            <input type="date" id="vpDate">
+          </div>
+          <div class="voice-actions">
+            <button class="btn-cancel" id="vpCancel">Descartar</button>
+            <button class="btn-primary" id="vpConfirm" style="margin-top:0;">Guardar</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- HISTORIAL -->
+    <section class="tabpage" id="page-history">
+      <div class="card">
+        <h2>Historial</h2>
+        <div class="filter-row" id="histFilters"></div>
+        <div id="histList"></div>
+      </div>
+    </section>
+
+    <!-- GRAFICO -->
+    <section class="tabpage" id="page-chart">
+      <div class="card">
+        <h2>Por categoría</h2>
+        <div class="donut-wrap"><svg id="donutSvg" width="180" height="180" viewBox="0 0 180 180"></svg></div>
+        <div id="donutLegend"></div>
+        <div class="empty" id="donutEmpty" style="display:none;">Todavía no hay gastos en este período.</div>
+      </div>
+      <div class="card" id="weeklyBarsCard">
+        <h2>Gastos por semana del mes</h2>
+        <div class="bars" id="weeklyBars"></div>
+      </div>
+    </section>
+
+    <!-- PRESUPUESTO -->
+    <section class="tabpage" id="page-budget">
+      <div class="card">
+        <h2>Presupuesto mensual por categoría</h2>
+        <div id="budgetMonthly"></div>
+      </div>
+      <div class="card">
+        <h2>Presupuesto semanal por categoría</h2>
+        <div id="budgetWeekly"></div>
+      </div>
+      <div class="card">
+        <h2>Categorías</h2>
+        <div class="field">
+          <label>Agregar categoría nueva</label>
+          <div style="display:flex;gap:8px;">
+            <input type="text" id="newCatName" placeholder="Ej: Mascotas" style="flex:1;padding:11px 12px;border:1.5px solid var(--border);border-radius:10px;font-size:14px;">
+            <input type="color" id="newCatColor" value="#4F46E5" style="width:44px;height:44px;border:none;border-radius:10px;padding:0;">
+          </div>
+        </div>
+        <button class="btn-secondary" id="btnAddCat">+ Agregar categoría</button>
+      </div>
+      <div class="card">
+        <h2>Copia de seguridad</h2>
+        <button class="btn-secondary" id="btnBackupExport">Exportar backup (.json)</button>
+        <div style="height:10px;"></div>
+        <button class="btn-outline" style="width:100%;" id="btnBackupImport">Restaurar desde archivo</button>
+        <input type="file" id="backupFile" class="file-input-hidden" accept="application/json">
+      </div>
+    </section>
+
+  </main>
+
+  <nav class="tabbar">
+    <button class="tab-btn active" data-page="page-add"><span class="ic">➕</span>Registrar</button>
+    <button class="tab-btn" data-page="page-voice"><span class="ic">🎙️</span>Por voz</button>
+    <button class="tab-btn" data-page="page-history"><span class="ic">📋</span>Historial</button>
+    <button class="tab-btn" data-page="page-chart"><span class="ic">📊</span>Gráfico</button>
+    <button class="tab-btn" data-page="page-budget"><span class="ic">🎯</span>Presupuesto</button>
+  </nav>
+
+  <div class="toast" id="toast"></div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
