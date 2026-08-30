@@ -21,7 +21,7 @@ const VOICE_KEYWORDS = {
   salud: ['salud', 'farmacia', 'medico', 'doctor', 'remedio', 'medicamento', 'dentista'],
 };
 
-const FILLER_WORDS = new Set(['gaste', 'gasté', 'pague', 'pagué', 'compre', 'compré', 'en', 'de', 'del', 'por', 'el', 'la', 'los', 'las', 'un', 'una', 'unos', 'unas', 'pesos', 'peso', 'plata', 'y', 'con']);
+const FILLER_WORDS = new Set(['gaste', 'gasté', 'pague', 'pagué', 'compre', 'compré', 'en', 'de', 'del', 'por', 'el', 'la', 'los', 'las', 'un', 'una', 'unos', 'unas', 'pesos', 'peso', 'plata', 'y', 'con', 'al', 'a', 'para', 'me', 'mi', 'lo', 'se']);
 
 /* ---------- Almacenamiento ---------- */
 const LS_KEYS = { expenses: 'mg_expenses', categories: 'mg_categories', budgets: 'mg_budgets' };
@@ -322,59 +322,95 @@ function parseVoiceText(text) {
   return { amount, categoryId: foundCatId, description };
 }
 
-function setupVoice() {
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  const micBtn = document.getElementById('micBtn');
-  if (!SR) {
-    document.getElementById('voiceUnsupported').style.display = 'block';
-    micBtn.disabled = true;
-    micBtn.style.opacity = '0.4';
-    return;
+/* Locales de dictado que Android/Chrome aceptan realmente. Ojo: navigator.language
+   suele devolver "es-419" (español de Latinoamérica), que NO es un locale válido de
+   reconocimiento de voz y hace fallar el dictado con language-not-supported. */
+const SPEECH_LANGS = [
+  'es-AR', 'es-BO', 'es-CL', 'es-CO', 'es-CR', 'es-DO', 'es-EC', 'es-SV',
+  'es-ES', 'es-US', 'es-GT', 'es-HN', 'es-MX', 'es-NI', 'es-PA', 'es-PY',
+  'es-PE', 'es-PR', 'es-UY', 'es-VE',
+];
+
+function pickSpeechLang() {
+  const cands = [];
+  if (navigator.languages && navigator.languages.length) cands.push(...navigator.languages);
+  if (navigator.language) cands.push(navigator.language);
+  for (const c of cands) {
+    if (!c) continue;
+    const norm = String(c).replace('_', '-').toLowerCase();
+    const exact = SPEECH_LANGS.find(l => l.toLowerCase() === norm);
+    if (exact) return exact;
   }
-  recognition = new SR();
-  recognition.lang = (navigator.language && navigator.language.startsWith('es')) ? navigator.language : 'es-CL';
-  recognition.continuous = false;
-  recognition.interimResults = false;
-  recognition.maxAlternatives = 1;
+  // "es", "es-419" o cualquier variante no reconocida → es-US, el de soporte más amplio.
+  return 'es-US';
+}
 
-  recognition.onstart = () => {
-    listening = true;
-    micBtn.classList.add('listening');
-    document.getElementById('micStatus').textContent = 'Escuchando… hablá ahora';
-  };
-  recognition.onresult = (e) => {
-    const text = e.results[0][0].transcript;
-    const tEl = document.getElementById('voiceTranscript');
-    tEl.style.display = 'block';
-    tEl.textContent = '"' + text + '"';
-    const parsed = parseVoiceText(text);
-    voicePending = true; // hay una previsualización activa para editar/guardar
-    document.getElementById('vpAmount').value = parsed.amount || '';
-    document.getElementById('vpDesc').value = parsed.description;
-    document.getElementById('vpDate').value = todayStr();
-    selectedVoiceCat = parsed.categoryId;
-    renderVpCatGrid();
-    document.getElementById('voicePreview').style.display = 'block';
-    document.getElementById('micStatus').textContent = parsed.amount
-      ? 'Revisá los datos y tocá "Guardar" (podés corregir cualquier campo)'
-      : 'No detecté el monto — completalo abajo antes de guardar';
-  };
-  recognition.onerror = (e) => {
-    document.getElementById('micStatus').textContent = 'No entendí bien, probá de nuevo';
-  };
-  recognition.onend = () => {
-    listening = false;
-    micBtn.classList.remove('listening');
+const DICTATE_HINT = ' Usá el campo de acá abajo con el micrófono de tu teclado 👇';
+
+const VOICE_ERRORS = {
+  'no-speech': 'No escuché nada. Tocá el micrófono y hablá cerca del teléfono.',
+  'audio-capture': 'No se pudo usar el micrófono. Fijate que no lo esté usando otra app.',
+  'not-allowed': 'Falta el permiso de micrófono para este sitio. Tocá el candado 🔒 al lado de la dirección y activá Micrófono.',
+  // Típico en teléfonos sin servicios de Google (Huawei nuevos): el dictado del
+  // navegador manda el audio a Google, así que no hay forma de que funcione ahí.
+  'service-not-allowed': 'Este teléfono no tiene el servicio de voz de Google.' + DICTATE_HINT,
+  'network': 'No se pudo contactar al servicio de voz (necesita internet y servicios de Google).' + DICTATE_HINT,
+  'aborted': 'Se cortó la escucha. Probá de nuevo.',
+  'language-not-supported': 'Este teléfono no soporta el idioma del dictado.' + DICTATE_HINT,
+};
+
+let voiceGotResult = false;
+
+function setMicStatus(msg) {
+  const el = document.getElementById('micStatus');
+  if (el) el.textContent = msg;
+}
+
+/* Muestra la vista previa editable a partir de una frase, venga del dictado del
+   navegador o del campo de texto (donde se puede usar el micrófono del teclado
+   del teléfono, que funciona incluso sin los servicios de Google). */
+function showVoicePreview(text) {
+  const tEl = document.getElementById('voiceTranscript');
+  tEl.style.display = 'block';
+  tEl.textContent = '"' + text + '"';
+  const parsed = parseVoiceText(text);
+  voicePending = true; // hay una previsualización activa para editar/guardar
+  document.getElementById('vpAmount').value = parsed.amount || '';
+  document.getElementById('vpDesc').value = parsed.description;
+  document.getElementById('vpDate').value = todayStr();
+  selectedVoiceCat = parsed.categoryId;
+  renderVpCatGrid();
+  document.getElementById('voicePreview').style.display = 'block';
+  setMicStatus(parsed.amount
+    ? 'Revisá los datos y tocá "Guardar" (podés corregir cualquier campo)'
+    : 'No detecté el monto — completalo abajo antes de guardar');
+}
+
+/* Campo de texto + botón: la vía que sí funciona en teléfonos sin servicios de
+   Google (Huawei nuevos, por ejemplo), usando el micrófono del teclado. */
+function setupDictateField() {
+  const input = document.getElementById('dictateInput');
+  const btn = document.getElementById('dictateBtn');
+  if (!input || !btn) return;
+
+  const run = () => {
+    const text = input.value.trim();
+    if (!text) { toast('Escribí o dictá una frase primero'); input.focus(); return; }
+    showVoicePreview(text);
+    input.value = '';
+    input.blur();
   };
 
-  micBtn.addEventListener('click', () => {
-    if (listening) { recognition.stop(); return; }
-    document.getElementById('voicePreview').style.display = 'none';
-    document.getElementById('voiceTranscript').style.display = 'none';
-    voicePending = null;
-    try { recognition.start(); } catch (e) { /* ya iniciado */ }
+  btn.addEventListener('click', run);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); run(); }
   });
+}
 
+/* Botones Guardar/Descartar de la vista previa. Van aparte de setupVoice() porque
+   se necesitan SIEMPRE: aunque el dictado del navegador no exista, la frase puede
+   llegar por el campo de texto. */
+function setupVoicePreviewActions() {
   document.getElementById('vpConfirm').addEventListener('click', () => {
     if (!voicePending) return;
     const amount = parseFloat(document.getElementById('vpAmount').value);
@@ -390,15 +426,92 @@ function setupVoice() {
     voicePending = null;
     document.getElementById('voicePreview').style.display = 'none';
     document.getElementById('voiceTranscript').style.display = 'none';
-    document.getElementById('micStatus').textContent = 'Guardado ✓ Tocá el micrófono para otro gasto';
+    setMicStatus('Guardado ✓ Cargá otro gasto cuando quieras');
     toast('Gasto agregado por voz ✓');
     renderAll();
   });
   document.getElementById('vpCancel').addEventListener('click', () => {
     voicePending = null;
     document.getElementById('voicePreview').style.display = 'none';
-    document.getElementById('micStatus').textContent = 'Toca el micrófono y di algo como "Gasté 3500 en colectivo"';
+    document.getElementById('voiceTranscript').style.display = 'none';
+    setMicStatus('Toca el micrófono y di algo como "Gasté 3500 en colectivo"');
   });
+}
+
+function setupVoice() {
+  setupDictateField();        // siempre disponible, funcione o no el dictado del navegador
+  setupVoicePreviewActions(); // idem: sin esto el botón "Guardar" no hace nada
+
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const micBtn = document.getElementById('micBtn');
+  if (!SR) {
+    document.getElementById('voiceUnsupported').style.display = 'block';
+    micBtn.disabled = true;
+    micBtn.style.opacity = '0.4';
+    return;
+  }
+  recognition = new SR();
+  recognition.lang = pickSpeechLang();
+  recognition.continuous = false;
+  recognition.interimResults = false;
+  recognition.maxAlternatives = 1;
+
+  recognition.onstart = () => {
+    listening = true;
+    voiceGotResult = false;
+    micBtn.classList.add('listening');
+    setMicStatus('Escuchando… hablá ahora');
+  };
+  recognition.onresult = (e) => {
+    voiceGotResult = true;
+    showVoicePreview(e.results[0][0].transcript);
+  };
+  recognition.onerror = (e) => {
+    const code = e && e.error ? e.error : 'desconocido';
+    voiceGotResult = true; // ya informamos el problema; que onend no lo pise
+    const msg = VOICE_ERRORS[code] || ('Falló el dictado (' + code + '). Probá de nuevo.');
+    setMicStatus(msg + '  ·  [' + code + ' / ' + recognition.lang + ']');
+  };
+  recognition.onend = () => {
+    listening = false;
+    micBtn.classList.remove('listening');
+    if (!voiceGotResult) {
+      setMicStatus('No llegó nada del micrófono.' + DICTATE_HINT);
+    }
+  };
+
+  micBtn.addEventListener('click', async () => {
+    if (listening) { recognition.stop(); return; }
+    document.getElementById('voicePreview').style.display = 'none';
+    document.getElementById('voiceTranscript').style.display = 'none';
+    voicePending = null;
+    voiceGotResult = false;
+
+    // Pedimos el micrófono explícitamente: en Android esto hace que el diálogo de
+    // permiso aparezca de forma confiable ANTES de arrancar el reconocimiento, en vez
+    // de que el dictado falle en silencio.
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      setMicStatus('Pidiendo acceso al micrófono…');
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        stream.getTracks().forEach(t => t.stop());
+      } catch (err) {
+        const name = err && err.name ? err.name : 'error';
+        setMicStatus(name === 'NotAllowedError'
+          ? 'Bloqueaste el micrófono para este sitio. Tocá el candado 🔒 al lado de la dirección y activá Micrófono.'
+          : 'No se pudo abrir el micrófono (' + name + ').');
+        return;
+      }
+    }
+
+    try {
+      recognition.lang = pickSpeechLang();
+      recognition.start();
+    } catch (e) {
+      setMicStatus('No se pudo iniciar el dictado: ' + (e && e.message ? e.message : e));
+    }
+  });
+
 }
 
 /* ---------- Tab: Historial ---------- */
