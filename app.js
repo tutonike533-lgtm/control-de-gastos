@@ -24,7 +24,13 @@ const VOICE_KEYWORDS = {
 const FILLER_WORDS = new Set(['gaste', 'gasté', 'pague', 'pagué', 'compre', 'compré', 'en', 'de', 'del', 'por', 'el', 'la', 'los', 'las', 'un', 'una', 'unos', 'unas', 'pesos', 'peso', 'plata', 'y', 'con', 'al', 'a', 'para', 'me', 'mi', 'lo', 'se']);
 
 /* ---------- Almacenamiento ---------- */
-const LS_KEYS = { expenses: 'mg_expenses', categories: 'mg_categories', budgets: 'mg_budgets' };
+const LS_KEYS = {
+  expenses: 'mg_expenses',
+  categories: 'mg_categories',
+  budgets: 'mg_budgets',
+  incomes: 'mg_incomes',
+  livestock: 'mg_livestock',
+};
 
 function load(key, fallback) {
   try {
@@ -33,7 +39,36 @@ function load(key, fallback) {
     return JSON.parse(raw);
   } catch (e) { return fallback; }
 }
-function save(key, value) { localStorage.setItem(key, JSON.stringify(value)); }
+
+/* Devuelve true si guardó. El caso que importa es quedarse sin espacio, que en
+   la práctica pasa por las fotos del ganado: ahí avisamos en vez de fallar mudo. */
+function save(key, value) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+    return true;
+  } catch (e) {
+    const sinEspacio = e && (e.name === 'QuotaExceededError' || e.code === 22 || e.code === 1014);
+    toast(sinEspacio
+      ? 'Sin espacio en el teléfono. Borrá alguna foto de ganado.'
+      : 'No se pudo guardar el cambio.');
+    return false;
+  }
+}
+
+/* Cuánto ocupan los datos de la app, para mostrarlo en Ajustes. */
+function storageUsedBytes() {
+  let total = 0;
+  for (const k of Object.values(LS_KEYS)) {
+    const v = localStorage.getItem(k);
+    if (v) total += v.length + k.length;
+  }
+  return total * 2; // UTF-16: ~2 bytes por caracter
+}
+function fmtBytes(b) {
+  if (b < 1024) return b + ' B';
+  if (b < 1024 * 1024) return (b / 1024).toFixed(0) + ' KB';
+  return (b / (1024 * 1024)).toFixed(1) + ' MB';
+}
 
 /* ---------- Sincronización con la nube (Claude Artifacts) ----------
    En la versión publicada como Artifact (con la capacidad "artifact"
@@ -66,7 +101,7 @@ function buildSharedDoc(state) {
 
 async function syncToCloud() {
   if (!artifactNs) return;
-  const doc = buildSharedDoc({ expenses, categories, budgets });
+  const doc = buildSharedDoc({ expenses, categories, budgets, incomes, livestock });
   if (!doc) return;
   try {
     await artifactNs.publish(doc);
@@ -97,10 +132,12 @@ function readEmbeddedState() {
 function hasRealData(s) {
   if (!s) return false;
   const hasExpenses = Array.isArray(s.expenses) && s.expenses.length > 0;
+  const hasIncomes = Array.isArray(s.incomes) && s.incomes.length > 0;
+  const hasLivestock = Array.isArray(s.livestock) && s.livestock.length > 0;
   const hasCats = Array.isArray(s.categories) && s.categories.some(c => !DEFAULT_CATEGORIES.some(d => d.id === c.id));
   const b = s.budgets;
   const hasBudgets = !!(b && ((b.monthly && Object.keys(b.monthly).length) || (b.weekly && Object.keys(b.weekly).length)));
-  return hasExpenses || hasCats || hasBudgets;
+  return hasExpenses || hasIncomes || hasLivestock || hasCats || hasBudgets;
 }
 
 if (window.claude && typeof window.claude.use === 'function') {
@@ -115,25 +152,34 @@ const __embedded = readEmbeddedState();
 const __localExpenses = load(LS_KEYS.expenses, []);
 const __localCategories = load(LS_KEYS.categories, DEFAULT_CATEGORIES);
 const __localBudgets = load(LS_KEYS.budgets, { monthly: {}, weekly: {} });
+const __localIncomes = load(LS_KEYS.incomes, []);
+const __localLivestock = load(LS_KEYS.livestock, []);
 
-let expenses, categories, budgets;
+let expenses, categories, budgets, incomes, livestock;
 if (hasRealData(__embedded)) {
   // La página publicada ya tiene datos reales guardados: es la fuente de verdad.
   expenses = __embedded.expenses || [];
   categories = (Array.isArray(__embedded.categories) && __embedded.categories.length) ? __embedded.categories : DEFAULT_CATEGORIES;
   budgets = (__embedded.budgets && typeof __embedded.budgets === 'object') ? __embedded.budgets : { monthly: {}, weekly: {} };
+  incomes = Array.isArray(__embedded.incomes) ? __embedded.incomes : [];
+  livestock = Array.isArray(__embedded.livestock) ? __embedded.livestock : [];
   save(LS_KEYS.expenses, expenses); save(LS_KEYS.categories, categories); save(LS_KEYS.budgets, budgets);
-} else if (hasRealData({ expenses: __localExpenses, categories: __localCategories, budgets: __localBudgets })) {
-  // Todavía no hay nada en la nube, pero este navegador ya tenía gastos cargados: los usamos como base y los subimos.
+  save(LS_KEYS.incomes, incomes); save(LS_KEYS.livestock, livestock);
+} else if (hasRealData({ expenses: __localExpenses, categories: __localCategories, budgets: __localBudgets, incomes: __localIncomes, livestock: __localLivestock })) {
+  // Todavía no hay nada en la nube, pero este navegador ya tenía datos: los usamos como base y los subimos.
   expenses = __localExpenses; categories = __localCategories; budgets = __localBudgets;
+  incomes = __localIncomes; livestock = __localLivestock;
   pendingPublish = true;
 } else {
   expenses = []; categories = DEFAULT_CATEGORIES; budgets = { monthly: {}, weekly: {} };
+  incomes = []; livestock = [];
 }
 
 function persistExpenses() { save(LS_KEYS.expenses, expenses); schedulePublish(); }
 function persistCategories() { save(LS_KEYS.categories, categories); schedulePublish(); }
 function persistBudgets() { save(LS_KEYS.budgets, budgets); schedulePublish(); }
+function persistIncomes() { save(LS_KEYS.incomes, incomes); schedulePublish(); }
+function persistLivestock() { return save(LS_KEYS.livestock, livestock) && (schedulePublish(), true); }
 
 function categoryById(id) { return categories.find(c => c.id === id) || categories[categories.length - 1]; }
 
@@ -177,20 +223,45 @@ function fmtShort(n) {
 }
 
 /* ---------- Estado de período ---------- */
-let mode = 'month'; // 'month' | 'week'
+let mode = 'month'; // 'day' | 'week' | 'month' | 'range'
 let monthAnchor = startOfMonth(new Date());
 let weekAnchor = startOfWeek(new Date());
+let dayAnchor = (function () { const d = new Date(); d.setHours(0, 0, 0, 0); return d; })();
+let rangeStartISO = toLocalISO(startOfMonth(new Date()));
+let rangeEndISO = todayStr();
 let historyFilter = 'all';
+let historyKind = 'all'; // 'all' | 'expense' | 'income'
 
 function currentRange() {
-  if (mode === 'month') return { start: startOfMonth(monthAnchor), end: endOfMonth(monthAnchor) };
-  return { start: startOfWeek(weekAnchor), end: endOfWeek(weekAnchor) };
+  if (mode === 'day') return { start: dayAnchor, end: dayAnchor };
+  if (mode === 'week') return { start: startOfWeek(weekAnchor), end: endOfWeek(weekAnchor) };
+  if (mode === 'range') {
+    let s = parseISO(rangeStartISO), e = parseISO(rangeEndISO);
+    if (s > e) { const t = s; s = e; e = t; } // si los invierte, los damos vuelta
+    return { start: s, end: e };
+  }
+  return { start: startOfMonth(monthAnchor), end: endOfMonth(monthAnchor) };
 }
 function expensesInRange(start, end) {
   const s = toLocalISO(start), e = toLocalISO(end);
   return expenses.filter(x => x.date >= s && x.date <= e);
 }
+function incomesInRange(start, end) {
+  const s = toLocalISO(start), e = toLocalISO(end);
+  return incomes.filter(x => x.date >= s && x.date <= e);
+}
 function currentPeriodExpenses() { const { start, end } = currentRange(); return expensesInRange(start, end); }
+function currentPeriodIncomes() { const { start, end } = currentRange(); return incomesInRange(start, end); }
+
+const DIAS = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
+function dayLabel(d) {
+  const hoy = todayStr();
+  const iso = toLocalISO(d);
+  const ayer = new Date(); ayer.setDate(ayer.getDate() - 1);
+  if (iso === hoy) return 'Hoy · ' + d.getDate() + ' ' + MESES_ABR[d.getMonth()];
+  if (iso === toLocalISO(ayer)) return 'Ayer · ' + d.getDate() + ' ' + MESES_ABR[d.getMonth()];
+  return DIAS[d.getDay()] + ' ' + d.getDate() + ' ' + MESES_ABR[d.getMonth()] + ' ' + d.getFullYear();
+}
 
 /* ---------- Toast ---------- */
 let toastTimer;
@@ -204,29 +275,52 @@ function toast(msg) {
 
 /* ---------- Render: header/período/resumen ---------- */
 function renderPeriodHeader() {
-  document.getElementById('periodLabel').textContent = mode === 'month' ? monthLabel(monthAnchor) : weekLabel(weekAnchor);
-  document.getElementById('modeMonthBtn').classList.toggle('active', mode === 'month');
+  let label = '';
+  if (mode === 'day') label = dayLabel(dayAnchor);
+  else if (mode === 'week') label = weekLabel(weekAnchor);
+  else if (mode === 'month') label = monthLabel(monthAnchor);
+  document.getElementById('periodLabel').textContent = label;
+
+  document.getElementById('modeDayBtn').classList.toggle('active', mode === 'day');
   document.getElementById('modeWeekBtn').classList.toggle('active', mode === 'week');
+  document.getElementById('modeMonthBtn').classList.toggle('active', mode === 'month');
+  document.getElementById('modeRangeBtn').classList.toggle('active', mode === 'range');
+
+  // En modo rango el usuario elige las fechas a mano, así que las flechas no aplican.
+  document.getElementById('periodNav').style.display = mode === 'range' ? 'none' : 'flex';
+  document.getElementById('rangeNav').classList.toggle('on', mode === 'range');
+  document.getElementById('rangeStart').value = rangeStartISO;
+  document.getElementById('rangeEnd').value = rangeEndISO;
+
   document.getElementById('weeklyBarsCard').style.display = mode === 'month' ? '' : 'none';
 }
 
 function renderSummary() {
-  const items = currentPeriodExpenses();
-  const total = items.reduce((a, x) => a + x.amount, 0);
-  document.getElementById('sumTotal').textContent = fmtMoney(total);
+  const gastos = currentPeriodExpenses().reduce((a, x) => a + x.amount, 0);
+  const ingresos = currentPeriodIncomes().reduce((a, x) => a + x.amount, 0);
+  const balance = ingresos - gastos;
 
-  const budgetMap = mode === 'month' ? budgets.monthly : budgets.weekly;
-  const totalBudget = categories.reduce((a, c) => a + (Number(budgetMap[c.id]) || 0), 0);
+  document.getElementById('sumTotal').textContent = fmtMoney(gastos);
+  document.getElementById('sumIncome').textContent = fmtMoney(ingresos);
+  const balEl = document.getElementById('sumBalance');
+  balEl.textContent = fmtMoney(balance);
+  balEl.classList.toggle('neg', balance < 0);
+
+  // El presupuesto está definido por mes y por semana; en día y rango no aplica.
+  const budgetMap = mode === 'week' ? budgets.weekly : budgets.monthly;
+  const totalBudget = (mode === 'month' || mode === 'week')
+    ? categories.reduce((a, c) => a + (Number(budgetMap[c.id]) || 0), 0)
+    : 0;
 
   const pctEl = document.getElementById('sumPct');
   const bar = document.getElementById('sumBar');
   if (totalBudget > 0) {
-    const pct = (total / totalBudget) * 100;
-    pctEl.textContent = Math.round(pct) + '%';
+    const pct = (gastos / totalBudget) * 100;
+    pctEl.textContent = Math.round(pct) + '% de ' + fmtMoney(totalBudget);
     bar.style.width = Math.min(pct, 100) + '%';
     bar.classList.toggle('over', pct > 100);
   } else {
-    pctEl.textContent = 'Sin definir';
+    pctEl.textContent = (mode === 'month' || mode === 'week') ? 'Sin definir' : 'Solo por semana o mes';
     bar.style.width = '0%';
     bar.classList.remove('over');
   }
@@ -266,6 +360,50 @@ function addExpense() {
   document.getElementById('addDate').value = todayStr();
   toast('Gasto agregado ✓');
   renderAll();
+}
+
+/* ---------- Tab: Registrar — Ingresos ---------- */
+function addIncome() {
+  const amountInput = document.getElementById('incAmount');
+  const amount = parseFloat(amountInput.value);
+  if (!amount || amount <= 0) { toast('Ingresá un monto válido'); return; }
+  const sourceInput = document.getElementById('incSource');
+  const source = sourceInput.value.trim() || 'Ingreso';
+  const date = document.getElementById('incDate').value || todayStr();
+  incomes.push({
+    id: 'i' + Date.now() + Math.random().toString(36).slice(2, 7),
+    amount, source, date, createdAt: Date.now(),
+  });
+  persistIncomes();
+  amountInput.value = '';
+  sourceInput.value = '';
+  document.getElementById('incDate').value = todayStr();
+  toast('Ingreso agregado ✓');
+  renderAll();
+}
+
+/* Sugerencias de origen: lo que el usuario ya escribió antes, sin repetir. */
+function renderIncomeSuggestions() {
+  const list = document.getElementById('incSourceList');
+  if (!list) return;
+  const vistos = [];
+  for (let i = incomes.length - 1; i >= 0 && vistos.length < 8; i--) {
+    const s = (incomes[i].source || '').trim();
+    if (s && !vistos.some(v => v.toLowerCase() === s.toLowerCase())) vistos.push(s);
+  }
+  if (!vistos.length) vistos.push('Sueldo');
+  list.innerHTML = vistos.map(s => '<option value="' + escapeHtml(s) + '"></option>').join('');
+}
+
+function setRegisterMode(kind) {
+  const esIngreso = kind === 'income';
+  document.getElementById('formGasto').style.display = esIngreso ? 'none' : '';
+  document.getElementById('formIngreso').style.display = esIngreso ? '' : 'none';
+  const gBtn = document.getElementById('segGasto');
+  const iBtn = document.getElementById('segIngreso');
+  gBtn.classList.toggle('active', !esIngreso);
+  iBtn.classList.toggle('active', esIngreso);
+  iBtn.classList.toggle('income', esIngreso);
 }
 
 /* ---------- Tab: Voz ---------- */
@@ -516,8 +654,12 @@ function setupVoice() {
 
 /* ---------- Tab: Historial ---------- */
 function renderHistoryFilters() {
+  // Los filtros por categoría solo tienen sentido cuando se ven gastos.
   const wrap = document.getElementById('histFilters');
+  wrap.style.display = historyKind === 'income' ? 'none' : '';
   wrap.innerHTML = '';
+  if (historyKind === 'income') return;
+
   const all = document.createElement('div');
   all.className = 'filter-chip' + (historyFilter === 'all' ? ' active' : '');
   all.textContent = 'Todas';
@@ -532,37 +674,82 @@ function renderHistoryFilters() {
   });
 }
 
+function setHistoryKind(kind) {
+  historyKind = kind;
+  document.getElementById('histAll').classList.toggle('active', kind === 'all');
+  document.getElementById('histExp').classList.toggle('active', kind === 'expense');
+  const incBtn = document.getElementById('histInc');
+  incBtn.classList.toggle('active', kind === 'income');
+  incBtn.classList.toggle('income', kind === 'income');
+  renderHistoryFilters();
+  renderHistory();
+}
+
 function renderHistory() {
   const list = document.getElementById('histList');
-  let items = currentPeriodExpenses();
-  if (historyFilter !== 'all') items = items.filter(x => x.categoryId === historyFilter);
-  items = items.slice().sort((a, b) => (b.date + b.createdAt).localeCompare(a.date + a.createdAt));
+  const filas = [];
 
-  if (items.length === 0) {
-    list.innerHTML = '<div class="empty">No hay gastos registrados en este período.</div>';
+  if (historyKind !== 'income') {
+    let gastos = currentPeriodExpenses();
+    if (historyFilter !== 'all') gastos = gastos.filter(x => x.categoryId === historyFilter);
+    gastos.forEach(x => filas.push({ kind: 'expense', item: x }));
+  }
+  if (historyKind !== 'expense') {
+    currentPeriodIncomes().forEach(x => filas.push({ kind: 'income', item: x }));
+  }
+
+  filas.sort((a, b) => {
+    const k = b.item.date.localeCompare(a.item.date);
+    return k !== 0 ? k : (b.item.createdAt || 0) - (a.item.createdAt || 0);
+  });
+
+  if (filas.length === 0) {
+    const que = historyKind === 'income' ? 'ingresos' : historyKind === 'expense' ? 'gastos' : 'movimientos';
+    list.innerHTML = '<div class="empty">No hay ' + que + ' registrados en este período.</div>';
     return;
   }
+
   list.innerHTML = '';
-  items.forEach(x => {
-    const cat = categoryById(x.categoryId);
+  filas.forEach(({ kind, item }) => {
+    const d = parseISO(item.date);
+    const fecha = d.getDate() + ' ' + MESES_ABR[d.getMonth()];
     const row = document.createElement('div');
     row.className = 'hist-item';
-    const d = parseISO(x.date);
-    row.innerHTML = `
-      <div class="hist-dot" style="background:${cat.color}22;color:${cat.color}">${cat.icon}</div>
-      <div class="hist-info">
-        <div class="desc">${escapeHtml(x.description)}</div>
-        <div class="meta">${cat.name} · ${d.getDate()} ${MESES_ABR[d.getMonth()]}</div>
-      </div>
-      <div class="hist-amount">${fmtMoney(x.amount)}</div>
-      <button class="hist-del" data-id="${x.id}">✕</button>`;
+    if (kind === 'income') {
+      row.innerHTML = `
+        <div class="hist-dot" style="background:#16A34A22;color:#16A34A">💵</div>
+        <div class="hist-info">
+          <div class="desc">${escapeHtml(item.source)}</div>
+          <div class="meta">Ingreso · ${fecha}</div>
+        </div>
+        <div class="hist-amount inc">+${fmtMoney(item.amount)}</div>
+        <button class="hist-del" data-id="${item.id}" data-kind="income">✕</button>`;
+    } else {
+      const cat = categoryById(item.categoryId);
+      row.innerHTML = `
+        <div class="hist-dot" style="background:${cat.color}22;color:${cat.color}">${cat.icon}</div>
+        <div class="hist-info">
+          <div class="desc">${escapeHtml(item.description)}</div>
+          <div class="meta">${cat.name} · ${fecha}</div>
+        </div>
+        <div class="hist-amount">${fmtMoney(item.amount)}</div>
+        <button class="hist-del" data-id="${item.id}" data-kind="expense">✕</button>`;
+    }
     list.appendChild(row);
   });
+
   list.querySelectorAll('.hist-del').forEach(btn => {
     btn.addEventListener('click', () => {
-      expenses = expenses.filter(x => x.id !== btn.dataset.id);
-      persistExpenses();
-      toast('Gasto eliminado');
+      const id = btn.dataset.id;
+      if (btn.dataset.kind === 'income') {
+        incomes = incomes.filter(x => x.id !== id);
+        persistIncomes();
+        toast('Ingreso eliminado');
+      } else {
+        expenses = expenses.filter(x => x.id !== id);
+        persistExpenses();
+        toast('Gasto eliminado');
+      }
       renderAll();
     });
   });
@@ -672,6 +859,206 @@ function renderWeeklyBars() {
   });
 }
 
+/* ---------- Tab: Ganado ----------
+   Las fotos se guardan como data URL dentro de localStorage, que es chico
+   (unos pocos MB). Por eso toda foto se reduce y recomprime antes de guardar:
+   sin esto, tres o cuatro fotos de cámara llenan el almacenamiento. */
+const PHOTO_MAX_DIM = 900;
+const PHOTO_QUALITY = 0.7;
+
+function compressImage(file, maxDim = PHOTO_MAX_DIM, quality = PHOTO_QUALITY) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('No se pudo leer el archivo'));
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error('No se pudo abrir la imagen'));
+      img.onload = () => {
+        try {
+          let w = img.naturalWidth || img.width;
+          let h = img.naturalHeight || img.height;
+          if (!w || !h) { reject(new Error('Imagen vacía')); return; }
+          if (w > maxDim || h > maxDim) {
+            const escala = maxDim / Math.max(w, h);
+            w = Math.max(1, Math.round(w * escala));
+            h = Math.max(1, Math.round(h * escala));
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = w; canvas.height = h;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, w, h);
+          resolve(canvas.toDataURL('image/jpeg', quality));
+        } catch (err) { reject(err); }
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+let editingAnimalId = null;
+let pendingPhoto = null; // data URL de la foto elegida, todavía sin guardar
+
+function setAnimalPhoto(dataUrl) {
+  pendingPhoto = dataUrl;
+  const prev = document.getElementById('anPhotoPreview');
+  const picker = document.getElementById('anPhotoPicker');
+  const rm = document.getElementById('anPhotoRemove');
+  if (dataUrl) {
+    prev.src = dataUrl;
+    prev.style.display = '';
+    picker.textContent = '📷 Cambiar foto';
+    rm.style.display = '';
+  } else {
+    prev.removeAttribute('src');
+    prev.style.display = 'none';
+    picker.textContent = '📷 Tocá para sacar una foto o elegir de la galería';
+    rm.style.display = 'none';
+  }
+}
+
+function clearAnimalForm() {
+  editingAnimalId = null;
+  document.getElementById('anName').value = '';
+  document.getElementById('anType').value = 'Vaca';
+  document.getElementById('anWeight').value = '';
+  document.getElementById('anNotes').value = '';
+  setAnimalPhoto(null);
+  document.getElementById('animalFormTitle').textContent = 'Agregar animal';
+  document.getElementById('btnSaveAnimal').textContent = 'Guardar animal';
+  document.getElementById('btnCancelAnimal').style.display = 'none';
+}
+
+function startEditAnimal(id) {
+  const a = livestock.find(x => x.id === id);
+  if (!a) return;
+  editingAnimalId = id;
+  document.getElementById('anName').value = a.name || '';
+  document.getElementById('anType').value = a.type || 'Vaca';
+  document.getElementById('anWeight').value = a.weight != null ? a.weight : '';
+  document.getElementById('anNotes').value = a.notes || '';
+  setAnimalPhoto(a.photo || null);
+  document.getElementById('animalFormTitle').textContent = 'Editar animal';
+  document.getElementById('btnSaveAnimal').textContent = 'Guardar cambios';
+  document.getElementById('btnCancelAnimal').style.display = '';
+  document.getElementById('animalFormTitle').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function saveAnimal() {
+  const name = document.getElementById('anName').value.trim();
+  if (!name) { toast('Ponele un nombre al animal'); return; }
+  const type = document.getElementById('anType').value;
+  const weightRaw = document.getElementById('anWeight').value;
+  const weight = weightRaw === '' ? null : parseFloat(weightRaw);
+  if (weight != null && (isNaN(weight) || weight < 0)) { toast('Peso inválido'); return; }
+  const notes = document.getElementById('anNotes').value.trim();
+
+  // Guardamos sobre una copia: si no entra en el almacenamiento, dejamos
+  // los datos como estaban en vez de perderlos.
+  const respaldo = livestock.slice();
+  if (editingAnimalId) {
+    const a = livestock.find(x => x.id === editingAnimalId);
+    if (a) Object.assign(a, { name, type, weight, notes, photo: pendingPhoto || null, updatedAt: Date.now() });
+  } else {
+    livestock.push({
+      id: 'a' + Date.now() + Math.random().toString(36).slice(2, 7),
+      name, type, weight, notes,
+      photo: pendingPhoto || null,
+      createdAt: Date.now(), updatedAt: Date.now(),
+    });
+  }
+
+  if (!persistLivestock()) { livestock = respaldo; renderAll(); return; }
+  toast(editingAnimalId ? 'Animal actualizado ✓' : 'Animal agregado ✓');
+  clearAnimalForm();
+  renderAll();
+}
+
+function renderLivestock() {
+  const list = document.getElementById('animalList');
+  const totalEl = document.getElementById('animalTotal');
+  if (!list) return;
+
+  if (livestock.length === 0) {
+    list.innerHTML = '<div class="empty">Todavía no cargaste ningún animal. Agregá el primero acá abajo.</div>';
+    totalEl.style.display = 'none';
+    return;
+  }
+
+  const ordenados = livestock.slice().sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  list.innerHTML = '';
+  ordenados.forEach(a => {
+    const row = document.createElement('div');
+    row.className = 'animal-card';
+    const foto = a.photo
+      ? `<img class="animal-photo" src="${a.photo}" alt="${escapeHtml(a.name)}">`
+      : `<div class="animal-photo">🐄</div>`;
+    const peso = (a.weight != null && a.weight !== '')
+      ? `<div class="kg">${a.weight} kg</div>` : '';
+    const nota = a.notes ? ` · ${escapeHtml(a.notes)}` : '';
+    row.innerHTML = `
+      ${foto}
+      <div class="animal-info">
+        <div class="nm">${escapeHtml(a.name)}</div>
+        <div class="tp">${escapeHtml(a.type || '')}${nota}</div>
+        ${peso}
+      </div>
+      <div class="animal-actions">
+        <button class="mini-btn" data-edit="${a.id}">Editar</button>
+        <button class="mini-btn del" data-del="${a.id}">Borrar</button>
+      </div>`;
+    list.appendChild(row);
+  });
+
+  const conPeso = livestock.filter(a => a.weight != null && a.weight !== '' && !isNaN(a.weight));
+  const kilos = conPeso.reduce((s, a) => s + Number(a.weight), 0);
+  totalEl.style.display = '';
+  totalEl.innerHTML = `<span>${livestock.length} ${livestock.length === 1 ? 'animal' : 'animales'}</span>` +
+    (conPeso.length ? `<span>${Math.round(kilos).toLocaleString('es-CL')} kg en total</span>` : '<span></span>');
+
+  list.querySelectorAll('[data-edit]').forEach(b =>
+    b.addEventListener('click', () => startEditAnimal(b.dataset.edit)));
+  list.querySelectorAll('[data-del]').forEach(b =>
+    b.addEventListener('click', () => {
+      const a = livestock.find(x => x.id === b.dataset.del);
+      if (!a) return;
+      livestock = livestock.filter(x => x.id !== b.dataset.del);
+      persistLivestock();
+      if (editingAnimalId === b.dataset.del) clearAnimalForm();
+      toast('Animal eliminado');
+      renderAll();
+    }));
+}
+
+function setupLivestock() {
+  const picker = document.getElementById('anPhotoPicker');
+  const input = document.getElementById('anPhotoInput');
+  if (!picker || !input) return;
+
+  picker.addEventListener('click', () => input.click());
+  input.addEventListener('change', async (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = ''; // permite volver a elegir el mismo archivo
+    if (!file) return;
+    if (!/^image\//.test(file.type)) { toast('Eso no parece una imagen'); return; }
+    picker.textContent = '⏳ Procesando foto…';
+    try {
+      const dataUrl = await compressImage(file);
+      setAnimalPhoto(dataUrl);
+    } catch (err) {
+      setAnimalPhoto(pendingPhoto);
+      toast('No se pudo procesar la foto');
+    }
+  });
+
+  document.getElementById('anPhotoRemove').addEventListener('click', () => setAnimalPhoto(null));
+  document.getElementById('btnSaveAnimal').addEventListener('click', saveAnimal);
+  document.getElementById('btnCancelAnimal').addEventListener('click', () => {
+    clearAnimalForm();
+    toast('Edición cancelada');
+  });
+}
+
 /* ---------- Tab: Presupuesto ---------- */
 function renderBudgetSection(containerId, type) {
   const container = document.getElementById(containerId);
@@ -719,14 +1106,25 @@ function addCategory() {
   renderAll();
 }
 
-/* ---------- CSV ---------- */
+/* ---------- CSV ----------
+   Exporta el período que se está viendo (día, semana, mes o rango), con
+   gastos e ingresos juntos y ordenados por fecha. */
 function exportCsv() {
-  const s = startOfMonth(monthAnchor), e = endOfMonth(monthAnchor);
-  const items = expensesInRange(s, e).slice().sort((a, b) => a.date.localeCompare(b.date));
-  const rows = [['Fecha', 'Categoría', 'Descripción', 'Monto']];
-  items.forEach(x => rows.push([x.date, categoryById(x.categoryId).name, x.description, x.amount]));
+  const { start, end } = currentRange();
+  const filas = [];
+  expensesInRange(start, end).forEach(x => filas.push({
+    date: x.date, tipo: 'Gasto', cat: categoryById(x.categoryId).name,
+    detalle: x.description, monto: -x.amount,
+  }));
+  incomesInRange(start, end).forEach(x => filas.push({
+    date: x.date, tipo: 'Ingreso', cat: '', detalle: x.source, monto: x.amount,
+  }));
+  filas.sort((a, b) => a.date.localeCompare(b.date));
+
+  const rows = [['Fecha', 'Tipo', 'Categoría', 'Detalle', 'Monto']];
+  filas.forEach(f => rows.push([f.date, f.tipo, f.cat, f.detalle, f.monto]));
   const csv = rows.map(r => r.map(csvEscape).join(',')).join('\r\n');
-  downloadBlob(csv, `gastos_${monthAnchor.getFullYear()}-${String(monthAnchor.getMonth() + 1).padStart(2, '0')}.csv`, 'text/csv;charset=utf-8;', 'CSV descargado');
+  downloadBlob(csv, `gastos_${toLocalISO(start)}_a_${toLocalISO(end)}.csv`, 'text/csv;charset=utf-8;', 'CSV descargado');
 }
 function csvEscape(v) {
   const s = String(v);
@@ -765,7 +1163,10 @@ async function downloadBlob(content, filename, type, successMsg) {
 
 /* ---------- Backup ---------- */
 function exportBackup() {
-  const data = { expenses, categories, budgets, exportedAt: new Date().toISOString(), app: 'MisGastos', version: 1 };
+  const data = {
+    expenses, categories, budgets, incomes, livestock,
+    exportedAt: new Date().toISOString(), app: 'MisGastos', version: 2,
+  };
   downloadBlob(JSON.stringify(data, null, 2), `misgastos_backup_${todayStr()}.json`, 'application/json', 'Backup exportado');
 }
 function importBackup(file) {
@@ -777,7 +1178,12 @@ function importBackup(file) {
       expenses = data.expenses;
       categories = Array.isArray(data.categories) && data.categories.length ? data.categories : DEFAULT_CATEGORIES;
       budgets = data.budgets && typeof data.budgets === 'object' ? data.budgets : { monthly: {}, weekly: {} };
+      // Backups viejos (version 1) no traen estos campos: quedan vacíos, no rompen.
+      incomes = Array.isArray(data.incomes) ? data.incomes : [];
+      livestock = Array.isArray(data.livestock) ? data.livestock : [];
       persistExpenses(); persistCategories(); persistBudgets();
+      persistIncomes(); persistLivestock();
+      clearAnimalForm();
       toast('Backup restaurado ✓');
       renderAll();
     } catch (e) {
@@ -798,20 +1204,36 @@ function renderAll() {
   renderPeriodHeader();
   renderSummary();
   renderAddCatGrid();
+  renderIncomeSuggestions();
   renderHistoryFilters();
   renderHistory();
   renderDonut();
   renderWeeklyBars();
+  renderLivestock();
   renderBudgetSection('budgetMonthly', 'monthly');
   renderBudgetSection('budgetWeekly', 'weekly');
+  renderStorageInfo();
+}
+
+function renderStorageInfo() {
+  const el = document.getElementById('storageInfo');
+  if (!el) return;
+  const conFoto = livestock.filter(a => a.photo).length;
+  el.textContent = 'Datos guardados: ' + fmtBytes(storageUsedBytes()) +
+    (conFoto ? ' · ' + conFoto + (conFoto === 1 ? ' foto de ganado' : ' fotos de ganado') : '');
 }
 
 /* ---------- Inicialización ---------- */
 function init() {
   document.getElementById('addDate').value = todayStr();
+  document.getElementById('incDate').value = todayStr();
   renderAddCatGrid();
 
   document.getElementById('btnAddExpense').addEventListener('click', addExpense);
+  document.getElementById('btnAddIncome').addEventListener('click', addIncome);
+  document.getElementById('segGasto').addEventListener('click', () => setRegisterMode('expense'));
+  document.getElementById('segIngreso').addEventListener('click', () => setRegisterMode('income'));
+
   document.getElementById('btnAddCat').addEventListener('click', addCategory);
   document.getElementById('btnCsv').addEventListener('click', exportCsv);
   document.getElementById('btnBackupExport').addEventListener('click', exportBackup);
@@ -821,15 +1243,31 @@ function init() {
     e.target.value = '';
   });
 
-  document.getElementById('modeMonthBtn').addEventListener('click', () => { mode = 'month'; renderAll(); });
+  document.getElementById('histAll').addEventListener('click', () => setHistoryKind('all'));
+  document.getElementById('histExp').addEventListener('click', () => setHistoryKind('expense'));
+  document.getElementById('histInc').addEventListener('click', () => setHistoryKind('income'));
+
+  document.getElementById('modeDayBtn').addEventListener('click', () => { mode = 'day'; renderAll(); });
   document.getElementById('modeWeekBtn').addEventListener('click', () => { mode = 'week'; renderAll(); });
+  document.getElementById('modeMonthBtn').addEventListener('click', () => { mode = 'month'; renderAll(); });
+  document.getElementById('modeRangeBtn').addEventListener('click', () => { mode = 'range'; renderAll(); });
+
+  document.getElementById('rangeStart').addEventListener('change', (e) => {
+    if (e.target.value) { rangeStartISO = e.target.value; renderAll(); }
+  });
+  document.getElementById('rangeEnd').addEventListener('change', (e) => {
+    if (e.target.value) { rangeEndISO = e.target.value; renderAll(); }
+  });
+
   document.getElementById('prevPeriod').addEventListener('click', () => {
-    if (mode === 'month') monthAnchor = new Date(monthAnchor.getFullYear(), monthAnchor.getMonth() - 1, 1);
+    if (mode === 'day') { const d = new Date(dayAnchor); d.setDate(d.getDate() - 1); dayAnchor = d; }
+    else if (mode === 'month') monthAnchor = new Date(monthAnchor.getFullYear(), monthAnchor.getMonth() - 1, 1);
     else { const d = new Date(weekAnchor); d.setDate(d.getDate() - 7); weekAnchor = startOfWeek(d); }
     renderAll();
   });
   document.getElementById('nextPeriod').addEventListener('click', () => {
-    if (mode === 'month') monthAnchor = new Date(monthAnchor.getFullYear(), monthAnchor.getMonth() + 1, 1);
+    if (mode === 'day') { const d = new Date(dayAnchor); d.setDate(d.getDate() + 1); dayAnchor = d; }
+    else if (mode === 'month') monthAnchor = new Date(monthAnchor.getFullYear(), monthAnchor.getMonth() + 1, 1);
     else { const d = new Date(weekAnchor); d.setDate(d.getDate() + 7); weekAnchor = startOfWeek(d); }
     renderAll();
   });
@@ -839,6 +1277,8 @@ function init() {
   });
 
   setupVoice();
+  setupLivestock();
+  clearAnimalForm();
   renderAll();
 
   if ('serviceWorker' in navigator) {
